@@ -2,10 +2,11 @@
 #include <HTTPClient.h>
 #include <math.h>
 
+// --- Config Wi-Fi
 const char* ssid = "iPhone Cauan";
 const char* password = "Cauan1010";
 
-// IPs reais dos 4 sensores (ajuste conforme sua rede)
+// --- IPs reais dos 4 sensores laterais
 const char* sensorIPs[4] = {
   "172.20.10.9",   // ESP1
   "172.20.10.10",  // ESP2
@@ -13,91 +14,116 @@ const char* sensorIPs[4] = {
   "172.20.10.12"   // ESP4
 };
 
-// Posições reais dos sensores (em metros, ajuste conforme instalação física)
-float sensorPos[4][2] = {
-  {0, 0},     // ESP1
-  {0, 5},     // ESP2
-  {5, 0},     // ESP3
-  {5, 5}      // ESP4
+struct Node {
+  String id;
+  float x;
+  float y;
 };
 
-int rssi[4];
-// Coloque o IP e porta reais do seu backend Java
+Node nodes[4];
+
+// --- Backend Java
 const char* backend_url = "http://192.168.0.100:8080/api/location";
 
-void setup() {
-  Serial.begin(115200);
-  WiFi.begin(ssid, password);
-
-  Serial.print("Conectando");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+// --- Função: requisita RSSI de um ESP lateral
+int getRssiFromSensor(String ip) {
+  HTTPClient http;
+  http.begin("http://" + ip + "/ping");
+  int httpCode = http.GET();
+  int rssi = -100;
+  if (httpCode == 200) {
+    String payload = http.getString();
+    int index = payload.indexOf("RSSI: ");
+    int endIndex = payload.indexOf(" dBm", index);
+    if (index != -1 && endIndex != -1) {
+      rssi = payload.substring(index + 6, endIndex).toInt();
+    }
   }
-  Serial.println("\n✅ Central conectada ao Wi-Fi!");
+  http.end();
+  return rssi;
 }
 
-void loop() {
+// --- Função: pedir distância relativa entre ESPs (para calibração)
+float getDistance(String ip, String target) {
+  HTTPClient http;
+  http.begin("http://" + ip + "/distance?target=" + target);
+  int httpCode = http.GET();
+  float dist = 5.0; // valor padrão
+  if (httpCode == 200) {
+    dist = http.getString().toFloat();
+  }
+  http.end();
+  return dist;
+}
+
+// --- Calibração automática do pátio
+void calibratePatio() {
+  Serial.println("Iniciando calibração...");
+
+  float d12 = getDistance(sensorIPs[0], "ESP2");
+  float d13 = getDistance(sensorIPs[0], "ESP3");
+  float d14 = getDistance(sensorIPs[0], "ESP4");
+
+  // aqui você pode usar triangulação; para simplificar vou assumir retângulo
+  nodes[0] = {"ESP1", 0, 0};
+  nodes[1] = {"ESP2", d12, 0};
+  nodes[2] = {"ESP3", 0, d13};
+  nodes[3] = {"ESP4", d12, d13};
+
+  Serial.println("✅ Calibração concluída!");
+}
+
+// --- Localização da moto/celular
+void locateMoto() {
+  int rssi[4];
   for (int i = 0; i < 4; i++) {
-    String url = "http://" + String(sensorIPs[i]) + "/ping";
-    HTTPClient http;
-    http.begin(url);
-    int httpCode = http.GET();
-
-    if (httpCode == 200) {
-      String payload = http.getString();
-      Serial.println("Resposta do sensor:");
-      Serial.println(payload);
-
-      int index = payload.indexOf("RSSI: ");
-      int endIndex = payload.indexOf(" dBm", index);
-      if (index != -1 && endIndex != -1) {
-        String rssiStr = payload.substring(index + 6, endIndex);
-        rssiStr.trim();
-        rssi[i] = rssiStr.toInt();
-      } else {
-        rssi[i] = -100;
-      }
-    } else {
-      Serial.printf("❌ Erro ao acessar %s\n", sensorIPs[i]);
-      rssi[i] = -100;
-    }
-    http.end();
+    rssi[i] = getRssiFromSensor(sensorIPs[i]);
+    Serial.printf("RSSI do %s: %d dBm\n", nodes[i].id.c_str(), rssi[i]);
   }
 
-  // Estimar posição baseada nos RSSIs reais
-  float estX = 0;
-  float estY = 0;
-  float totalWeight = 0;
+  float estX = 0, estY = 0, totalWeight = 0;
 
   for (int i = 0; i < 4; i++) {
-    float distance = pow(10, (abs(rssi[i]) - 45) / 20.0); // Ajuste conforme testes reais
+    float distance = pow(10, (abs(rssi[i]) - 45) / 20.0);
     float weight = 1.0 / fmax(distance, 0.1);
-    estX += sensorPos[i][0] * weight;
-    estY += sensorPos[i][1] * weight;
+    estX += nodes[i].x * weight;
+    estY += nodes[i].y * weight;
     totalWeight += weight;
   }
 
   estX /= totalWeight;
   estY /= totalWeight;
 
-  Serial.printf("📍 Localização estimada da moto: (%.2f, %.2f)\n", estX, estY);
+  Serial.printf("📍 Localização estimada: (%.2f, %.2f)\n", estX, estY);
 
-  // Envia para backend Java
+  // Envia para backend
   HTTPClient http;
   http.begin(backend_url);
   http.addHeader("Content-Type", "application/json");
   String json = "{\"x\":" + String(estX, 2) + ",\"y\":" + String(estY, 2) + "}";
   int httpCode = http.POST(json);
   if (httpCode > 0) {
-    Serial.println("Localização enviada ao backend!");
+    Serial.println("✅ Localização enviada ao backend!");
   } else {
-    Serial.println("Falha ao enviar localização ao backend.");
+    Serial.println("❌ Falha ao enviar localização.");
   }
   http.end();
-
-  delay(15000);
 }
 
-// Este ESP32 central consulta os 4 sensores de extremidade via HTTP,
-// calcula a posição da moto e envia para o backend Java para persistência.
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  Serial.print("Conectando");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\n✅ Central conectada ao Wi-Fi!");
+
+  calibratePatio(); // roda uma vez no início
+}
+
+void loop() {
+  locateMoto();
+  delay(5000); // atualiza a cada 5 segundos
+}
