@@ -5,25 +5,20 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-// Wi-Fi
 const char* ssid = "iPhone Cauan";
 const char* password = "Cauan1010";
 
-// Identificação do ESP
-String sensorID = "ESP1"; // ESP1, ESP2, ESP3 ou ESP4
-
-// UDP Central
+String sensorID = "ESP1"; // ESP1, ESP2, ESP3, ESP4
 const char* centralIP = "192.168.0.200";
 const int centralPort = 4210;
 WiFiUDP udp;
 
-// BLE
 BLEScan* pBLEScan;
 int scanTime = 2;
 
-// Lista dos outros ESPs para medir RSSI entre eles
+// Lista dos outros ESPs
 String outrosESP[3] = {"ESP2","ESP3","ESP4"};
-String espIPs[4] = {"172.20.10.9","172.20.10.10","172.20.10.11","172.20.10.12"};
+String espIPs[4] = {"192.168.0.201","192.168.0.202","192.168.0.203","192.168.0.204"};
 
 // Pega RSSI do celular/moto
 int getBleRssi() {
@@ -39,36 +34,18 @@ int getBleRssi() {
   return bleRssi;
 }
 
-// Pega RSSI de outro ESP via HTTP GET /ping
-int getEspRssi(String targetID){
-  String targetIP="";
-  for(int i=0;i<4;i++) if(sensorID!=targetID && espIPs[i].endsWith(targetID.substring(3))) targetIP=espIPs[i];
-
-  WiFiClient client;
-  if(!client.connect(targetIP.c_str(),80)) return -100;
-  client.print(String("GET /ping HTTP/1.1\r\nHost: ") + targetIP + "\r\nConnection: close\r\n\r\n");
-  long timeout = millis()+500;
-  while(!client.available() && millis()<timeout) delay(10);
-  String response="";
-  while(client.available()) response+=(char)client.read();
-  int index=response.indexOf("RSSI:");
-  int endIndex=response.indexOf(" dBm",index);
-  if(index!=-1 && endIndex!=-1) return response.substring(index+5,endIndex).toInt();
-  return -100;
-}
-
-// Envia RSSI para o central
-void sendToCentral(String motoId) {
-  int bleRssi = getBleRssi();
+// Envia posição ou RSSI para central
+void sendToCentral(float x=0, float y=0, int bleRssi=-100, JsonArray espRssi={}) {
   StaticJsonDocument<256> doc;
   doc["sensorID"] = sensorID;
+  doc["x"] = x;
+  doc["y"] = y;
   doc["bleRssi"] = bleRssi;
-  doc["motoId"] = motoId;
 
-  JsonArray espDistances = doc.createNestedArray("espRssi");
+  JsonArray espArr = doc.createNestedArray("espRssi");
   for(int i=0;i<3;i++){
-    int rssi=getEspRssi(outrosESP[i]);
-    espDistances.add(rssi);
+    int rssi=-100; // Pode adicionar scan entre ESPs
+    espArr.add(rssi);
   }
 
   char buffer[256];
@@ -89,11 +66,12 @@ void setup(){
   pBLEScan = BLEDevice::getScan();
   pBLEScan->setActiveScan(true);
 
-  udp.begin(4211); // Porta local para receber ACK do central se necessário
+  udp.begin(4211);
 }
 
 void loop(){
-  String motoId = "MOTO-001"; // Receber do app via backend seria ideal
-  sendToCentral(motoId);
-  delay(3000); // envia a cada 3s
+  String motoId = "MOTO-001"; 
+  int bleRssi = getBleRssi();
+  sendToCentral(0,0,bleRssi); // As coordenadas x,y serão calculadas pelo central
+  delay(3000);
 }

@@ -12,14 +12,39 @@ WiFiUDP udp;
 // Backend Java
 const char* backend_url = "http://192.168.0.100:8080/api/location";
 
-// Configura os 4 nós do pátio (ESP1 a ESP4)
+// Estrutura dos nós (ESP extremidades)
 struct Node { String id; float x; float y; };
-Node nodes[4] = {{"ESP1",0,0},{"ESP2",5,0},{"ESP3",0,5},{"ESP4",5,5}};
+Node nodes[4]; // Posições serão descobertas automaticamente
 
-// Converte RSSI em distância real
-float rssiToDistance(int rssi,int rssiRef=-45,float n=2.0){ return pow(10,(rssiRef-rssi)/(10*n)); }
+// Converte RSSI em distância
+float rssiToDistance(int rssi,int rssiRef=-45,float n=2.0){
+  return pow(10,(rssiRef-rssi)/(10*n));
+}
 
-// Multilateração
+// Atualiza posição dos nós via RSSI
+void atualizarNos(JsonObject espData){
+  String id = espData["sensorID"];
+  float x = espData["x"];
+  float y = espData["y"];
+  for(int i=0;i<4;i++){
+    if(nodes[i].id == id){
+      nodes[i].x = x;
+      nodes[i].y = y;
+      return;
+    }
+  }
+  // Se não existir ainda, adiciona
+  for(int i=0;i<4;i++){
+    if(nodes[i].id==""){
+      nodes[i].id = id;
+      nodes[i].x = x;
+      nodes[i].y = y;
+      return;
+    }
+  }
+}
+
+// Calcula posição da moto usando multilateração ponderada
 void calcularLocalizacao(JsonObject moto){
   int bleRssi = moto["bleRssi"];
   JsonArray espRssi = moto["espRssi"];
@@ -68,7 +93,9 @@ void loop(){
     StaticJsonDocument<512> doc;
     DeserializationError err = deserializeJson(doc, packet);
     if(!err){
-      calcularLocalizacao(doc.as<JsonObject>());
+      JsonObject obj = doc.as<JsonObject>();
+      if(obj.containsKey("sensorID")) atualizarNos(obj);
+      else calcularLocalizacao(obj);
     }
   }
   delay(10);
