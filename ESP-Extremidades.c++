@@ -2,76 +2,70 @@
 #include <WiFiUdp.h>
 #include <BLEDevice.h>
 #include <BLEScan.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
 
-const char* ssid = "iPhone Cauan";
-const char* password = "Cauan1010";
+// --- Configurações Wi-Fi ---
+const char* ssid = "FIAP-IOT";
+const char* password = "F!@p25.IOT";
 
-String sensorID = "ESP1"; // ESP1, ESP2, ESP3, ESP4
-const char* centralIP = "192.168.0.200";
+// --- Central ---
+const char* centralIP = "10.3.52.4";
 const int centralPort = 4210;
 WiFiUDP udp;
 
+// --- Sensor ---
+const char* sensorID = "ESP1";
 BLEScan* pBLEScan;
-int scanTime = 2;
+const int scanTime = 2; // segundos
 
-// Lista dos outros ESPs
-String outrosESP[3] = {"ESP2","ESP3","ESP4"};
-String espIPs[4] = {"192.168.0.201","192.168.0.202","192.168.0.203","192.168.0.204"};
-
-// Pega RSSI do celular/moto
+// --- Função que pega RSSI ---
 int getBleRssi() {
-  int bleRssi = -100; 
-  BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
-  for (int i = 0; i < foundDevices.getCount(); i++) {
-    BLEAdvertisedDevice device = foundDevices.getDevice(i);
-    if (device.getName() == "MotoFacil") { 
-      bleRssi = device.getRSSI();
+  int rssi = -100;
+  BLEScanResults* results = pBLEScan->start(scanTime, false);
+  for (int i = 0; i < results->getCount(); i++) {
+    BLEAdvertisedDevice device = results->getDevice(i);
+    if (device.getName() == "MotoFacil") {
+      rssi = device.getRSSI();
       break;
     }
   }
-  return bleRssi;
+  return rssi;
 }
 
-// Envia posição ou RSSI para central
-void sendToCentral(float x=0, float y=0, int bleRssi=-100, JsonArray espRssi={}) {
-  StaticJsonDocument<256> doc;
-  doc["sensorID"] = sensorID;
-  doc["x"] = x;
-  doc["y"] = y;
-  doc["bleRssi"] = bleRssi;
+// --- Envia RSSI (JSON manual) ---
+void sendToCentral(int bleRssi) {
+  char buffer[128];
+  snprintf(buffer, sizeof(buffer),
+           "{\"sensorID\":\"%s\",\"bleRssi\":%d,\"x\":0,\"y\":0,\"espRssi\":[-100,-100,-100]}",
+           sensorID, bleRssi);
 
-  JsonArray espArr = doc.createNestedArray("espRssi");
-  for(int i=0;i<3;i++){
-    int rssi=-100; // Pode adicionar scan entre ESPs
-    espArr.add(rssi);
-  }
-
-  char buffer[256];
-  size_t n = serializeJson(doc, buffer);
   udp.beginPacket(centralIP, centralPort);
-  udp.write((uint8_t*)buffer,n);
+  udp.write((uint8_t*)buffer, strlen(buffer));
   udp.endPacket();
 }
 
-void setup(){
+// --- Setup ---
+void setup() {
   Serial.begin(115200);
-  WiFi.begin(ssid,password);
-  Serial.print("Conectando");
-  while(WiFi.status()!=WL_CONNECTED){delay(300); Serial.print(".");}
-  Serial.println("\n✅ " + sensorID + " conectado, IP: " + WiFi.localIP());
+  WiFi.begin(ssid, password);
+  Serial.print("Conectando ao Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println("\n✅ Conectado ao Wi-Fi.");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
 
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan();
-  pBLEScan->setActiveScan(true);
+  pBLEScan->setActiveScan(false); // menor tamanho
 
   udp.begin(4211);
 }
 
-void loop(){
-  String motoId = "MOTO-001"; 
+// --- Loop ---
+void loop() {
   int bleRssi = getBleRssi();
-  sendToCentral(0,0,bleRssi); // As coordenadas x,y serão calculadas pelo central
+  sendToCentral(bleRssi);
   delay(3000);
 }
