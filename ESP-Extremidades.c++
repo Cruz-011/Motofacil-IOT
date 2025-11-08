@@ -3,21 +3,17 @@
 #include <BLEDevice.h>
 #include <BLEScan.h>
 
-// --- Configurações Wi-Fi ---
 const char* ssid = "FIAP-IOT";
 const char* password = "F!@p25.IOT";
 
-// --- Central ---
-const char* centralIP = "10.3.52.4";
+const char* centralIP = "10.3.52.4"; // IP da CENTRAL
 const int centralPort = 4210;
 WiFiUDP udp;
 
-// --- Sensor ---
-const char* sensorID = "ESP1";
+const char* sensorID = "ESP1"; // Troque para ESP2, ESP3, ESP4
 BLEScan* pBLEScan;
-const int scanTime = 2; // segundos
+const int scanTime = 2; 
 
-// --- Função que pega RSSI ---
 int getBleRssi() {
   int rssi = -100;
   BLEScanResults* results = pBLEScan->start(scanTime, false);
@@ -31,39 +27,28 @@ int getBleRssi() {
   return rssi;
 }
 
-// --- Envia RSSI (JSON manual) ---
 void sendToCentral(int bleRssi) {
   char buffer[128];
   snprintf(buffer, sizeof(buffer),
-           "{\"sensorID\":\"%s\",\"bleRssi\":%d,\"x\":0,\"y\":0,\"espRssi\":[-100,-100,-100]}",
-           sensorID, bleRssi);
-
+           "{\"sensorID\":\"%s\",\"bleRssi\":%d}", sensorID, bleRssi);
   udp.beginPacket(centralIP, centralPort);
   udp.write((uint8_t*)buffer, strlen(buffer));
   udp.endPacket();
 }
 
-// --- Setup ---
 void setup() {
   Serial.begin(115200);
   WiFi.begin(ssid, password);
   Serial.print("Conectando ao Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
-    Serial.print(".");
-  }
-  Serial.println("\n✅ Conectado ao Wi-Fi.");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
+  while (WiFi.status() != WL_CONNECTED) { delay(300); Serial.print("."); }
+  Serial.println("\n✅ Conectado. IP: " + WiFi.localIP().toString());
 
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan();
-  pBLEScan->setActiveScan(false); // menor tamanho
-
+  pBLEScan->setActiveScan(false);
   udp.begin(4211);
 }
 
-// --- Loop ---
 void loop() {
   int bleRssi = getBleRssi();
   sendToCentral(bleRssi);
